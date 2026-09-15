@@ -2101,16 +2101,28 @@ async def _send_yuanbao(chat_id, message, media_files=None):
 
 
 # --- Registry ---
-from tools.registry import tool_error
+from tools.registry import registry, tool_error
 
-# NOTE: ``send_message`` is intentionally NOT registered as an agent-callable
-# model tool. The agent should not decide on its own to fire off cross-platform
-# messages or reactions. The send engine in this module (``_send_to_platform``,
-# ``_send_via_adapter``, ``_parse_target_ref``, the per-platform ``_send_*``
-# helpers) remains the shared transport used by:
-#   - cron delivery (cron/scheduler.py)
-#   - the ``hermes send`` CLI command (hermes_cli/send_cmd.py)
-#   - the gateway kanban notifier (dashboard-toggled, outside agent control)
-#   - the standalone MCP server (mcp_serve.py), which is an opt-in surface
-# Those callers import the helpers directly; none of them need the registry
-# entry.
+
+def _discord_send_requirements() -> bool:
+    """Expose outbound sending only in a Discord-authenticated session.
+
+    The tool is added only to the ``hermes-discord`` platform toolset. The
+    token check prevents it from appearing when Discord is not configured,
+    while the existing target parser and adapter routing enforce delivery.
+    """
+    return bool(os.getenv("DISCORD_BOT_TOKEN"))
+
+
+# Keep the shared transport available to cron, ``hermes send``, kanban, and
+# MCP, while exposing it to the model only through the explicit Discord
+# platform toolset. This preserves the prior cross-platform safety boundary
+# for every other interactive platform.
+registry.register(
+    name="send_message",
+    toolset="discord",
+    schema=SEND_MESSAGE_SCHEMA,
+    handler=send_message_tool,
+    check_fn=_discord_send_requirements,
+    requires_env=["DISCORD_BOT_TOKEN"],
+)

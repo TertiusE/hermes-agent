@@ -397,10 +397,11 @@ TOOLSETS = {
     # ==========================================================================
     # Full Hermes toolsets (CLI + messaging platforms)
     #
-    # All platforms share the same core tools. Note: agents do NOT get an
-    # agent-callable send_message tool — outbound platform messaging is handled
-    # outside the agent loop (cron delivery, the gateway kanban notifier, and
-    # the `hermes send` CLI), not by the model deciding to send on its own.
+    # All platforms share the same core tools. Outbound messaging remains
+    # excluded from the shared core list so it is not exposed cross-platform by
+    # default. Trusted platform-specific sessions may opt into send_message
+    # explicitly below; cron delivery and the hermes send CLI continue to use
+    # the same transport outside the agent loop.
     # ==========================================================================
 
     "hermes-acp": {
@@ -487,6 +488,7 @@ TOOLSETS = {
         "tools": _HERMES_CORE_TOOLS + [
             "discord",
             "discord_admin",
+            "send_message",
         ],
         "includes": []
     },
