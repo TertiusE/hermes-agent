@@ -695,6 +695,23 @@ class TestLifecycleGuardModule:
         )
         assert result is False
 
+    def test_embedded_nul_in_shell_payload_does_not_crash_guard(self):
+        """A binary literal in inline interpreter code is not a script path.
+
+        The recursive shell walk can tokenize that literal as a candidate path;
+        the guard must ignore it rather than passing the NUL through to
+        ``os.open`` and holding the terminal tool until the gateway times out.
+        """
+        from cron.lifecycle_guard import (
+            contains_gateway_lifecycle_command_or_referenced_script,
+        )
+
+        result = contains_gateway_lifecycle_command_or_referenced_script(
+            "python3 -c 'payload = b\"\x00\"; print(payload)'"
+        )
+
+        assert result is False
+
     def test_shell_script_reference_walk_still_works(self, tmp_path):
         """The referenced-script walk still applies to real shell scripts:
         a .sh script that itself invokes a lifecycle command is caught."""

@@ -258,7 +258,11 @@ def _read_referenced_script(path: Path) -> tuple[Optional[str], bool]:
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
     try:
         descriptor = os.open(path, flags)
-    except OSError:
+    except (OSError, ValueError):
+        # ``Path`` accepts strings containing NUL, but ``os.open`` rejects
+        # them. A shell payload can contain a binary literal (for example
+        # Python code using ``b"\x00"``); tokenizing that payload must never
+        # turn the lifecycle guard itself into a terminal-tool timeout.
         return None, False
     try:
         metadata = os.fstat(descriptor)

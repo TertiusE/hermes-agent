@@ -141,6 +141,49 @@ class SlowSyncBot(FakeBot):
 
 
 @pytest.mark.asyncio
+async def test_private_voice_auto_join_and_leave_are_scoped_to_configured_user_and_room():
+    """The private VC auto-join may not follow another member or another room."""
+    config = PlatformConfig(enabled=True, token="test-token")
+    config.extra = {
+        "auto_join_voice": {
+            "enabled": True,
+            "guild_id": "100",
+            "user_id": "200",
+            "voice_channel_id": "300",
+            "text_channel_id": "400",
+        }
+    }
+    adapter = DiscordAdapter(config)
+    adapter._client = SimpleNamespace(user=SimpleNamespace(id=999))
+    adapter.join_voice_channel = AsyncMock(return_value=True)
+    adapter.leave_voice_channel = AsyncMock()
+    target = SimpleNamespace(id=300)
+    guild = SimpleNamespace(id=100)
+
+    configured_member = SimpleNamespace(id=200, guild=guild)
+    await adapter._handle_auto_join_voice_state(
+        configured_member, SimpleNamespace(channel=None), SimpleNamespace(channel=target)
+    )
+    adapter.join_voice_channel.assert_awaited_once()
+    join_call = adapter.join_voice_channel.await_args
+    assert join_call is not None
+    assert join_call.args[0] is target
+    assert join_call.kwargs["text_channel_id"] == 400
+
+    adapter.join_voice_channel.reset_mock()
+    await adapter._handle_auto_join_voice_state(
+        SimpleNamespace(id=201, guild=guild), SimpleNamespace(channel=None), SimpleNamespace(channel=target)
+    )
+    adapter.join_voice_channel.assert_not_awaited()
+
+    adapter._voice_clients[100] = SimpleNamespace(channel=target)
+    await adapter._handle_auto_join_voice_state(
+        configured_member, SimpleNamespace(channel=target), SimpleNamespace(channel=None)
+    )
+    adapter.leave_voice_channel.assert_awaited_once_with(100)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "initial_allowed",
     [
