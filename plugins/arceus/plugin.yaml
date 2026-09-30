@@ -1,0 +1,12 @@
+name: arceus
+version: 1.0.0
+description: "Arceus — Hermes' local Claude Code CLI token-offload worker. Registers the arceus_delegate tool, the /arceus-status command, and starts restart reconciliation + the completion watchdog."
+author: "Hermes core"
+# Built-in backend: ships with Hermes and auto-loads like other first-party
+# capabilities (spotify, image_gen backends). Actual on/off is controlled by
+# the `arceus.enabled` config flag, checked at dispatch/startup time, NOT by
+# plugin enablement — so `arceus.enabled: false` is the one-line kill switch,
+# not `plugins.disabled`.
+kind: backend
+hooks:
+  - gateway:startup

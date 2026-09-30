@@ -997,8 +997,9 @@ def _read_referenced_script_unlocked(
     try:
         descriptor = os.open(path, flags)
     except (OSError, ValueError):
-        # OSError: unreadable/missing/over-long. ValueError: embedded NUL in *path*. Either is
-        # "nothing to scan" — never crash the guard.
+        # OSError means unreadable/missing/over-long; ValueError can be an
+        # embedded NUL tokenized from a shell payload. Neither is executable
+        # script content, and neither may crash or stall the lifecycle guard.
         return None, False
     try:
         # ValueError: an embedded NUL byte in *path* itself — a binary's decoded bytes tokenized into a

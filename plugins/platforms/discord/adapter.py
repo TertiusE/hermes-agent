@@ -1049,6 +1049,9 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         self._voice_timeout_tasks: Dict[int, asyncio.Task] = {}  # guild_id -> timeout task
         self._voice_timeout_seconds = self._load_voice_timeout()
         self._playback_timeout_seconds = self._load_playback_timeout()
+        # Strict opt-in for a single trusted user's private voice room.  This
+        # deliberately stays disabled unless every numeric ID is configured.
+        self._auto_join_voice = self._load_auto_join_voice_config()
         self._voice_receivers: Dict[int, VoiceReceiver] = {}  # guild_id -> VoiceReceiver
         self._voice_listen_tasks: Dict[int, asyncio.Task] = {}  # guild_id -> listen loop
         self._voice_input_callback: Optional[Callable] = None  # set by run.py
@@ -1284,6 +1287,10 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
             async def on_ready():
                 logger.info("[%s] Connected as %s", adapter_self.name, adapter_self._client.user)
                 await adapter_self._resolve_allowed_usernames()
+                # Discord may not emit a fresh voice-state event for a member
+                # already sitting in the target room when the gateway restarts.
+                # Reconcile that one explicit opt-in target at ready time.
+                await adapter_self._reconcile_auto_join_voice()
                 adapter_self._ready_event.set()
                 if adapter_self._post_connect_task and not adapter_self._post_connect_task.done():
                     adapter_self._post_connect_task.cancel()
@@ -1329,7 +1336,10 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
 
             @self._client.event
             async def on_voice_state_update(member, before, after):
-                """Track voice channel join/leave events."""
+                """Track VC state and honor the tightly-scoped auto-join opt-in."""
+                await adapter_self._handle_auto_join_voice_state(member, before, after)
+
+                # Only track general voice state channels where the bot is connected.
                 bot_guild_ids = set(adapter_self._voice_clients.keys())
                 if not bot_guild_ids:
                     return
@@ -3387,6 +3397,80 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         """Return voice-channel inactivity timeout seconds; 0 disables it."""
         return self._load_discord_int_config(
             "voice_channel_inactivity_timeout_seconds", self.VOICE_TIMEOUT, minimum=0,
+        )
+
+    def _load_auto_join_voice_config(self) -> Dict[str, int]:
+        """Load a fail-closed private-VC auto-join configuration.
+
+        The feature has no effect unless enabled and all four IDs are valid.
+        It is intentionally scoped to one user, one guild, one voice channel,
+        and one private transcript channel.
+        """
+        raw = self.config.extra.get("auto_join_voice", {}) if isinstance(
+            getattr(self.config, "extra", None), dict
+        ) else {}
+        if not isinstance(raw, dict) or raw.get("enabled") is not True:
+            return {}
+        required = ("guild_id", "user_id", "voice_channel_id", "text_channel_id")
+        try:
+            values = {key: int(raw[key]) for key in required}
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Discord auto_join_voice is disabled: all four numeric IDs are required")
+            return {}
+        return values if all(value > 0 for value in values.values()) else {}
+
+    async def _handle_auto_join_voice_state(self, member, before, after) -> None:
+        """Join/leave only the configured private VC as its trusted user moves."""
+        cfg = self._auto_join_voice
+        if not cfg or getattr(member, "id", None) != cfg["user_id"]:
+            return
+        guild = getattr(member, "guild", None)
+        if not guild or getattr(guild, "id", None) != cfg["guild_id"]:
+            return
+        if self._client and member == self._client.user:
+            return
+
+        before_id = getattr(getattr(before, "channel", None), "id", None)
+        after_channel = getattr(after, "channel", None)
+        after_id = getattr(after_channel, "id", None)
+        target_id = cfg["voice_channel_id"]
+
+        if after_id == target_id and before_id != target_id:
+            joined = await self.join_voice_channel(
+                after_channel,
+                text_channel_id=cfg["text_channel_id"],
+                source={"platform": "discord", "chat_id": str(cfg["text_channel_id"])},
+            )
+            logger.info(
+                "Private VC auto-join for configured user %s %s",
+                cfg["user_id"], "succeeded" if joined else "failed",
+            )
+            return
+
+        if before_id == target_id and after_id != target_id:
+            voice_client = self._voice_clients.get(cfg["guild_id"])
+            if voice_client and getattr(getattr(voice_client, "channel", None), "id", None) == target_id:
+                await self.leave_voice_channel(cfg["guild_id"])
+                logger.info("Private VC auto-leave for configured user %s", cfg["user_id"])
+
+    async def _reconcile_auto_join_voice(self) -> None:
+        """Join after a restart when the configured user is already in the target VC."""
+        cfg = self._auto_join_voice
+        if not cfg or not self._client:
+            return
+        guild = self._client.get_guild(cfg["guild_id"])
+        member = guild.get_member(cfg["user_id"]) if guild else None
+        channel = getattr(getattr(member, "voice", None), "channel", None)
+        if getattr(channel, "id", None) != cfg["voice_channel_id"]:
+            return
+        joined = await self.join_voice_channel(
+            channel,
+            text_channel_id=cfg["text_channel_id"],
+            source={"platform": "discord", "chat_id": str(cfg["text_channel_id"])},
+        )
+        logger.info(
+            "Private VC startup reconciliation for configured user %s %s",
+            cfg["user_id"], "succeeded" if joined else "failed",
         )
 
     def _load_playback_timeout(self) -> int:

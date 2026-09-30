@@ -1370,8 +1370,67 @@ DEFAULT_CONFIG = {
         # deliverable). Async-delegation results are NEVER suppressed.
         "surface_child_process_notifications": False,
     },
-    # Ephemeral prefill messages file — JSON list of {role, content} dicts injected at the start of
-    # every API call for few-shot priming. Never saved to sessions/logs/trajectories.
+    # Arceus — token-offload worker backed by the official local `claude`
+    # CLI (subscription-authenticated). Hands substantial coding and ALL
+    # document/artifact tasks to a background `claude -p` subprocess instead
+    # of spending primary-model tokens, while Hermes owns reliable
+    # completion watching (process exit + watchdog reconciliation) and
+    # always sends a final response. See tools/arceus.py.
+    #
+    # Disable immediately with: arceus.enabled: false (kills new dispatches;
+    # already-running jobs still finalize/report normally).
+    "arceus": {
+        "enabled": True,
+        "provider": "claude-code-cli",
+        "executable": "claude",   # must be resolvable on PATH
+        "subscription_mode": True,
+        # Never forward a locally exported ANTHROPIC_API_KEY to the Arceus
+        # child by default — Arceus is meant to run on the user's Claude
+        # subscription via the official CLI's own OAuth/keychain auth, not
+        # metered API billing. Flip to true only if API-key billing for
+        # Arceus specifically is actually wanted.
+        "forward_anthropic_api_key": False,
+        "max_concurrent_jobs": 1,   # additional jobs queue (FIFO); see completion_watch below
+        "timeout_minutes": 30,
+        "max_correction_attempts": 1,
+        # Extra argv appended after `claude -p --output-format json`
+        # (e.g. ["--model", "opus"], ["--permission-mode", "acceptEdits"]).
+        "extra_cli_args": [],
+        "completion_watch": {
+            "enabled": True,
+            "heartbeat_seconds": 20,
+            "watchdog_seconds": 30,
+            "resume_parent_on_completion": True,
+            "final_response_required": True,
+        },
+        "routing": {
+            # Master switch for the token-offload routing philosophy: route
+            # substantial coding + all document/artifact work to Arceus
+            # EARLY rather than after Luna has already investigated.
+            "optimize_for_luna_token_offload": True,
+            "complex_coding": True,
+            "repository_heavy_work": True,
+            "documents": True,
+            "spreadsheets": True,
+            "presentations": True,
+            "pdfs": True,
+            "artifacts": True,
+            # User-phrase overrides (case-insensitive substring match).
+            "use_phrases": [
+                "use arceus", "use claude", "have claude code handle this",
+                "have arceus handle this", "delegate this to arceus",
+                "delegate this to claude",
+            ],
+            "skip_phrases": [
+                "keep this on luna", "don't use arceus", "do not use arceus",
+                "don't use claude", "do not use claude", "no arceus", "stay on luna",
+            ],
+        },
+    },
+
+    # Ephemeral prefill messages file — JSON list of {role, content} dicts
+    # injected at the start of every API call for few-shot priming.
+    # Never saved to sessions, logs, or trajectories.
     "prefill_messages_file": "",
     # Goals — persistent cross-turn /goal loop: after each turn an aux-model judge checks if the
     # goal is satisfied, else a continuation prompt re-enters the session until done, budget
@@ -1573,8 +1632,18 @@ DEFAULT_CONFIG = {
         "approval_mentions": False,
         # Voice-channel inactivity timeout (seconds); 0 = stay until `/voice leave`.
         "voice_channel_inactivity_timeout_seconds": 300,
-        # Minimum seconds before force-stopping a VC playback; the adapter probes clip duration and
-        # extends this floor so long TTS isn't cut off.
+        # Opt-in auto-join for a single trusted user's single private VC.
+        # All IDs are required; incomplete or invalid values fail closed.
+        "auto_join_voice": {
+            "enabled": False,
+            "guild_id": "",
+            "user_id": "",
+            "voice_channel_id": "",
+            "text_channel_id": "",
+        },
+        # Minimum seconds to wait for a VC playback before force-stopping it.
+        # The adapter also probes clip duration and extends this floor by a
+        # padding window, so long TTS readbacks are not cut at exactly 120s.
         "voice_playback_timeout_seconds": 120,
         # Voice-channel software mixer (plugins/platforms/discord/voice_mixer.py): ambient
         # "thinking" bed, verbal acks and TTS OVERLAP (ambient ducked) vs stop-and-swap.
