@@ -45,10 +45,6 @@ def _handle_status_command(raw_args: str) -> str:  # noqa: ARG001
         return f"ARCEUS STATUS\n\nCould not read Arceus state: {exc}"
 
 
-async def _on_gateway_startup(event_type: str, context: dict) -> None:  # noqa: ARG001
-    _run_startup_reconciliation()
-
-
 def register(ctx) -> None:
     try:
         import tools.arceus_tool as arceus_tool
@@ -62,8 +58,6 @@ def register(ctx) -> None:
         handler=_handle_status_command,
         description="Show Arceus (Claude Code CLI worker) status: enabled, running/queued jobs, watchdog, last result.",
     )
-    ctx.register_hook("gateway:startup", _on_gateway_startup)
-
     # Also reconcile immediately at plugin load — covers the CLI, which has
     # no "gateway:startup" event, and makes gateway startup reconciliation
     # happen as early as possible rather than waiting on the full platform

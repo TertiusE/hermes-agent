@@ -10,5 +10,3 @@ author: "Hermes core"
 kind: backend
 provides_tools:
   - arceus_delegate
-hooks:
-  - gateway:startup

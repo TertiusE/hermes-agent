@@ -207,6 +207,14 @@ def test_process_exit_triggers_completion_handler(tmp_path):
 
     row = wait_for_state(engine, handle.job_id, TERMINAL_STATES)
     assert row["state"] == ArceusState.SUCCEEDED.value
+    # Terminal state is committed before the completion rail is enqueued; wait
+    # for the documented eventual-delivery outcome rather than racing that
+    # narrow transaction-to-callback boundary.
+    assert wait_until(
+        lambda: (get_job(engine, handle.job_id) or {}).get("delivered") == 1 and len(events) == 1,
+        timeout=5.0,
+    ), "completion event was not delivered"
+    row = get_job(engine, handle.job_id)
     assert row["delivered"] == 1
     assert len(events) == 1
     evt = events[0]
