@@ -17,11 +17,28 @@ from tools.send_message_senders import (
     _adapter_media_method, _error, _live_adapter, _media_caption_split, _plugin_standalone_sender,
     _registry_standalone_send, _resolve_slack_user_target, _sanitize_error_text, _send_bluebubbles,
     _send_matrix_via_adapter, _send_qqbot, _send_signal, _send_telegram, _send_weixin, _send_yuanbao)
-from tools.registry import tool_error
+from tools.registry import registry, tool_error
 
-# NOTE: ``send_message`` is intentionally NOT registered as an agent-callable model tool
-# (the agent must not fire cross-platform messages on its own); cron delivery, the
-# ``hermes send`` CLI, the kanban notifier and the opt-in MCP server import the helpers.
+# NOTE: the generic transport is not exposed to ordinary agent sessions. This
+# installation makes a deliberately narrow exception for authenticated Discord
+# sessions only; cron delivery, ``hermes send``, Kanban, and MCP continue to
+# import the same helpers without gaining model-tool exposure elsewhere.
+
+SEND_MESSAGE_SCHEMA = {
+    "name": "send_message",
+    "description": "Send a message or attachment to an approved Discord target. Use only when the user explicitly authorizes external delivery.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["send", "list", "react", "unreact"]},
+            "target": {"type": "string", "description": "Discord target: discord, discord:channel_id, or discord:channel_id:thread_id."},
+            "message": {"type": "string", "description": "Message text; include MEDIA:/absolute/path for a native attachment."},
+            "emoji": {"type": "string"},
+            "message_id": {"type": "string"},
+        },
+        "required": [],
+    },
+}
 
 
 def prepare_send_message_platforms() -> None:
@@ -38,6 +55,21 @@ def send_message_tool(args, **kw):
     if action in ("react", "unreact"):
         return _handle_react(args, remove=action == "unreact")
     return _handle_send(args)
+
+
+def _discord_send_requirements() -> bool:
+    """Expose outbound delivery only when the Discord integration is configured."""
+    return bool(os.getenv("DISCORD_BOT_TOKEN"))
+
+
+registry.register(
+    name="send_message",
+    toolset="discord",
+    schema=SEND_MESSAGE_SCHEMA,
+    handler=send_message_tool,
+    check_fn=_discord_send_requirements,
+    requires_env=["DISCORD_BOT_TOKEN"],
+)
 
 
 def _resolve_tool_target(target: str, *, pass_unresolved_references: bool = False):

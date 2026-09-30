@@ -196,9 +196,9 @@ TOOLSETS = {
         posture=True,
     ),
 
-    # Full Hermes toolsets (CLI + messaging platforms). All share the core tools;
-    # there is deliberately no agent-callable send_message tool. hermes-acp is the
-    # coding posture minus the interactive clarify UI.
+    # Full Hermes toolsets (CLI + messaging platforms). All share the core tools.
+    # This installation exposes ``send_message`` only to its authenticated Discord
+    # sessions; every other platform retains the upstream no-agent-callable default.
     "hermes-acp": _ts(
         "Editor integration (VS Code, Zed, JetBrains) — coding-focused tools without "
         "messaging, audio, or clarify UI",
@@ -218,7 +218,7 @@ TOOLSETS = {
     "hermes-discord": _bundle(
         "Discord bot toolset - full access (terminal has safety checks via dangerous "
         "command approval)",
-        ["discord", "discord_admin"],
+        ["discord", "discord_admin", "send_message"],
     ),
     "hermes-whatsapp": _bundle("WhatsApp bot toolset - similar to Telegram (personal messaging, more trusted)"),
     "hermes-slack": _bundle("Slack bot toolset - full access for workspace use (terminal has safety checks)"),
