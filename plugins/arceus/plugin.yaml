@@ -8,5 +8,7 @@ author: "Hermes core"
 # plugin enablement — so `arceus.enabled: false` is the one-line kill switch,
 # not `plugins.disabled`.
 kind: backend
+provides_tools:
+  - arceus_delegate
 hooks:
   - gateway:startup

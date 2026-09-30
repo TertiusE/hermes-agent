@@ -62,14 +62,15 @@ def _discord_send_requirements() -> bool:
     return bool(os.getenv("DISCORD_BOT_TOKEN"))
 
 
-registry.register(
-    name="send_message",
-    toolset="discord",
-    schema=SEND_MESSAGE_SCHEMA,
-    handler=send_message_tool,
-    check_fn=_discord_send_requirements,
-    requires_env=["DISCORD_BOT_TOKEN"],
-)
+if os.getenv("DISCORD_BOT_TOKEN"):
+    registry.register(
+        name="send_message",
+        toolset="discord",
+        schema=SEND_MESSAGE_SCHEMA,
+        handler=send_message_tool,
+        check_fn=_discord_send_requirements,
+        requires_env=["DISCORD_BOT_TOKEN"],
+    )
 
 
 def _resolve_tool_target(target: str, *, pass_unresolved_references: bool = False):
