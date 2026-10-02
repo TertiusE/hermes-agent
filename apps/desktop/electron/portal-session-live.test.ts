@@ -10,12 +10,14 @@ import { promisify } from 'node:util'
 import { build } from 'esbuild'
 import { expect, test } from 'vitest'
 
-// Chromium needs a display. macOS and Windows always have one; a headless Linux
-// runner gets a virtual one through xvfb-run when it is installed (the js-tests
-// CI image installs it for this file). Resolved once so the skip is explicit:
-// `null` means the test cannot run here, otherwise the command prefix to use.
+// Chromium needs an X11 display for this isolated fixture. On Linux, use
+// xvfb-run whenever it is installed so the test is hermetic and never inherits
+// a real X11/Wayland session without its matching authentication credentials.
+// A real X11 display is only the fallback when it has an Xauthority path.
+// Resolved once so the skip is explicit: `null` means no valid display path is
+// available, otherwise this is the command prefix to use.
 const displayPrefix = (() => {
-  if (process.platform !== 'linux' || process.env.DISPLAY || process.env.WAYLAND_DISPLAY) {
+  if (process.platform !== 'linux') {
     return []
   }
 
@@ -24,7 +26,11 @@ const displayPrefix = (() => {
     .map(dir => join(dir, 'xvfb-run'))
     .find(existsSync)
 
-  return xvfbRun ? [xvfbRun, '-a'] : null
+  if (xvfbRun) {
+    return [xvfbRun, '-a']
+  }
+
+  return process.env.DISPLAY && process.env.XAUTHORITY ? [] : null
 })()
 
 test.skipIf(displayPrefix === null)(
@@ -44,7 +50,7 @@ test.skipIf(displayPrefix === null)(
       })
       const env: NodeJS.ProcessEnv = {}
 
-      for (const name of ['PATH', 'SystemRoot', 'WINDIR', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR']) {
+      for (const name of ['PATH', 'SystemRoot', 'WINDIR', 'DISPLAY', 'XAUTHORITY', 'WAYLAND_DISPLAY', 'XDG_RUNTIME_DIR']) {
         if (process.env[name]) {
           env[name] = process.env[name]
         }
