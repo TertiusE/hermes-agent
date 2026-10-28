@@ -41,7 +41,7 @@ INSTALL_ROOT="" BRANCH="main" DESKTOP_PID=0 RELAUNCH_TARGET=""
 RELAUNCH_CWD="" SANDBOX_FALLBACK=0 RELAUNCH_ARGS=()
 NO_GATEWAY=0
 NO_UI=0 NO_MARKER_CLEANUP=0 SELF_TEST_UI=0 SELF_TEST_GATE=0 SELF_TEST_MARKER=0
-SELF_TEST_TCC_HEAL=0
+SELF_TEST_TCC_HEAL=0 SELF_TEST_RESOLVER=0
 HANDOFF_DAEMONIZED=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -57,6 +57,7 @@ while [ $# -gt 0 ]; do
     --self-test-ui) SELF_TEST_UI=1; shift ;;
     --self-test-gate) SELF_TEST_GATE=1; shift ;;
     --self-test-tcc-heal) SELF_TEST_TCC_HEAL=1; shift ;;
+    --self-test-resolver) SELF_TEST_RESOLVER=1; shift ;;
     --daemonized) HANDOFF_DAEMONIZED=1; shift ;;
     --self-test-marker) SELF_TEST_MARKER=1; NO_UI=1; NO_MARKER_CLEANUP=1; shift ;;
     --) shift; RELAUNCH_ARGS=("$@"); shift $# ;;
@@ -74,6 +75,16 @@ LOG="$LOG_DIR/desktop-update-handoff.log"
 RESULT="$HERMES_HOME/.hermes-update-result.json"
 STATUS="${TMPDIR:-/tmp}/hermes-update-status.$$"
 STARTED_AT="$(date +%s)"  # the shim's elapsed clock; see serve-ui.py
+
+desktop_venv_bin() {
+  if [ -x "$INSTALL_ROOT/venv/bin/hermes" ]; then
+    printf '%s\n' "$INSTALL_ROOT/venv/bin"
+  elif [ -x "$INSTALL_ROOT/.venv/bin/hermes" ]; then
+    printf '%s\n' "$INSTALL_ROOT/.venv/bin"
+  else
+    return 1
+  fi
+}
 
 UI_SERVER_PID="" UI_BROWSER_PID="" UI_PROFILE_DIR="" FINAL_CODE=1
 FINAL_MSG="update did not complete"
@@ -220,7 +231,7 @@ default_browser_is_chromium() {
 start_ui() {
   [ "$NO_UI" -eq 1 ] && return
   local html="$SCRIPT_DIR/ui.html" py browser port="" i
-  py="${INSTALL_ROOT:+$INSTALL_ROOT/venv/bin/python3}"
+  py="$(desktop_venv_bin 2>/dev/null)/python3"
   [ -x "${py:-/nonexistent}" ] || py="$(command -v python3 2>/dev/null)"
   browser="$(find_browser)"
   if [ -n "$browser" ] && ! default_browser_is_chromium; then
@@ -611,12 +622,20 @@ tcc_pick_update_invoke() { # sets UPDATE_INVOKE; safety net past a failed heal
 }
 
 # ── self-tests: no update, touch nothing ────────────────────────────────────
+if [ "$SELF_TEST_RESOLVER" -eq 1 ]; then
+  trap - EXIT
+  RESOLVED_BIN="$(desktop_venv_bin)" || exit 3
+  printf '%s\n' "$RESOLVED_BIN"
+  exit 0
+fi
+
 if [ "$SELF_TEST_TCC_HEAL" -eq 1 ]; then
+  UPDATE_BIN="$(desktop_venv_bin)" || UPDATE_BIN="$INSTALL_ROOT/venv/bin"
   # Runs the REAL heal + invoke selection against --install-root and reports;
   # tests/scripts/desktop_update/test_desktop_update_tcc_heal.py drives the state matrix through it.
   trap - EXIT
-  tcc_anchor_heal "$INSTALL_ROOT/venv/bin" || true
-  tcc_pick_update_invoke "$INSTALL_ROOT/venv/bin"
+  tcc_anchor_heal "$UPDATE_BIN" || true
+  tcc_pick_update_invoke "$UPDATE_BIN"
   echo "state=$TCC_HEAL_STATE invoke=${UPDATE_INVOKE[*]}"
   exit 0
 fi
@@ -714,14 +733,15 @@ fi
 sleep 1
 start_ui
 
-HERMES_BIN="$INSTALL_ROOT/venv/bin/hermes"
+UPDATE_BIN="$(desktop_venv_bin)" || { FINAL_CODE=3 FINAL_MSG="Update aborted: neither venv/bin/hermes nor .venv/bin/hermes exists under $INSTALL_ROOT. The install needs repair."; log "$FINAL_MSG"; exit 3; }
+HERMES_BIN="$UPDATE_BIN/hermes"
 [ -x "$HERMES_BIN" ] || { FINAL_CODE=3 FINAL_MSG="Update aborted: $HERMES_BIN is missing. The install needs repair (run the Hermes installer or hermes doctor)."; log "$FINAL_MSG"; exit 3; }
 
 # Heal a venv the reverted TCC anchor left bricked BEFORE invoking the CLI:
 # venv/bin/hermes execs venv/bin/python3, so a dead alias kills every attempt
 # and its retry identically (#95759). macOS-only artifact; probe is cheap.
 if [ "$(uname)" = "Darwin" ]; then
-  if tcc_anchor_heal "$INSTALL_ROOT/venv/bin"; then
+  if tcc_anchor_heal "$UPDATE_BIN"; then
     case "$TCC_HEAL_STATE" in
       healed-*) log "TCC anchor self-heal repaired the venv interpreter ($TCC_HEAL_STATE)" ;;
     esac
@@ -729,7 +749,7 @@ if [ "$(uname)" = "Darwin" ]; then
     log "TCC anchor self-heal could not repair the venv ($TCC_HEAL_STATE)"
   fi
 fi
-tcc_pick_update_invoke "$INSTALL_ROOT/venv/bin"
+tcc_pick_update_invoke "$UPDATE_BIN"
 if [ "${UPDATE_INVOKE[0]}" != "$HERMES_BIN" ]; then
   log "venv/bin/python3 still unbootable; invoking the update via ${UPDATE_INVOKE[*]}"
 fi
@@ -813,9 +833,9 @@ else
   # The bricked-venv class is fixable and must not read as a generic exit 1:
   # a dead interpreter with a failed/impossible heal means retrying can never
   # succeed — tell the user what is actually wrong (#95759).
-  if ! tcc_probe_python "$INSTALL_ROOT/venv/bin/python3" \
-      && ! tcc_probe_python "$INSTALL_ROOT/venv/bin/python"; then
-    FINAL_MSG="Update failed: the Python interpreter inside $INSTALL_ROOT/venv cannot start (heal state: $TCC_HEAL_STATE). Reinstall the runtime with the Hermes installer, or run hermes doctor --fix from a terminal if any hermes command still works."
+  if ! tcc_probe_python "$UPDATE_BIN/python3" \
+      && ! tcc_probe_python "$UPDATE_BIN/python"; then
+    FINAL_MSG="Update failed: the Python interpreter inside $UPDATE_BIN cannot start (heal state: $TCC_HEAL_STATE). Reinstall the runtime with the Hermes installer, or run hermes doctor --fix from a terminal if any hermes command still works."
   fi
 fi
 exit "$FINAL_CODE"
